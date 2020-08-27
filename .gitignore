@@ -1,0 +1,10 @@
+# Compiled Python
+__pycache__
+*.pyc
+*.pyo
+
+# Virtualenv
+/venv-*/
+
+# Redo state databases
+.redo/

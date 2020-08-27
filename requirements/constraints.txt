@@ -1,0 +1,4 @@
+# Constraints can be either a version pin or a range
+#
+# This file is a .txt so it isn't confused for a .spec or a .lst when upgrading.
+
