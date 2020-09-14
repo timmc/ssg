@@ -11,7 +11,10 @@ venv="$DIR/venv-$pyver"
 [ -d "$venv" ] || python$pyver -m venv "$venv"
 . "$venv"/bin/activate
 
-# Compute any dependency changes if spec files have changed
+# Compute any dependency changes if spec files have changed.
+#
+# Run separately as `redo requirements/upgrade` if you want to check
+# for newer versions.
 (cd -- "$DIR"; redo-ifchange requirements/upgrade)
 # Install dependencies if needed
 (cd -- "$DIR"; redo-ifchange requirements/install)

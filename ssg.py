@@ -259,12 +259,18 @@ safe_html_post_content = f"""
     </div>
 """
 
+def generate_listing_page(posts_desc, page_title, page_desc, content_class):
+    """
+    Return HTML for a listing of posts, given posts in descending order by timestamp.
 
-def generate_index_page(posts_desc):
+    - page_title is the name of the page
+    - page_desc is some text describing the page
+    - content_class is the classname to use inside the #primary-content div
+    """
     # TODO use safe-by-default templating instead of manual calls to html.escape
     safe_html_listing = ""
     for year, posts_in_year in itertools.groupby(posts_desc, key=lambda p: p['meta']['date'].year):
-        safe_html_listing += f"<h1>{html.escape(str(year))}</h1>\n"
+        safe_html_listing += f"<h3>{html.escape(str(year))}</h3>\n"
         safe_html_listing += "<ul>\n"
         for post in posts_in_year:
             meta = post['meta']
@@ -276,7 +282,7 @@ def generate_index_page(posts_desc):
 <html lang="en">
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-  <title>Blog | {html.escape(site_title)}</title>
+  <title>{html.escape(page_title)} | Blog | {html.escape(site_title)}</title>
 
   <link rel="stylesheet" href="/style/cleaner/generic.css" type="text/css" />
   <link rel="stylesheet" href="/style/cleaner/stylemods/posts.css" type="text/css" />
@@ -289,7 +295,7 @@ def generate_index_page(posts_desc):
 
     <div id="content" class="multi-post">
       <div id="primary-content">
-        <div class="most-recent-posts">
+        <div class="{html.escape(content_class)}">
           <ul>
             {safe_html_listing}
           </ul>
@@ -300,10 +306,8 @@ def generate_index_page(posts_desc):
         <!-- TODO search -->
 
         <div class="page-state">
-          <h2>Most recent posts</h2>
-          <p>These are the most recent entries I've published.
-            Older posts are organized by date in the archives.
-          </p>
+          <h2>{html.escape(page_title)}</h2>
+          <p>{html.escape(page_desc)}</p>
         </div>
       </div>
     </div>
@@ -344,6 +348,14 @@ def format_readable_date(date):
     )
 
 
+def tag_to_slug(tag):
+    """Given a tag, normalize to a URL-safe tag slug."""
+    safe = re.sub(r'[^a-z0-9]', '-', tag.lower())
+    short = re.sub(r'\-+', '-', safe)
+    trimmed = short.strip('-')
+    return trimmed or '-'
+
+
 def generate_comment_html(content_raw):
     return markdown.markdown(content_raw, output_format='html5')
 
@@ -359,8 +371,14 @@ def generate_comment_section(post):
 <a href="{html.escape(post['meta']['_internal']['comments_feed_path'])}" title="Comment feed for this post"><img src="/img/feed-14sq.png" class="feed-icon" alt="Feed icon"></a>
 """
 
+    safe_html_no_commenting = """
+Commenting is
+<a href="/blog/2020/08/18/from-wordpress-to-ssg/">not yet reimplemented</a>
+after the Wordpress migration, sorry!
+For now, you can <a href="/contact/">email me</a> and I can manually add comments.
+"""
     if not comments:
-        return f"""<p>No comments yet. {safe_html_feed_link}</p>"""
+        return f"""<p>No comments yet. {safe_html_no_commenting} {safe_html_feed_link}</p>"""
 
     comment_count = str(len(comments))
     output = f"""
@@ -397,7 +415,7 @@ def generate_comment_section(post):
   <div class="commentdata userformat">{safe_html_comment_content}</div>
 </li>
 """
-    output + """</ol>n"""
+    output += f"""</ol><p>{safe_html_no_commenting}</p>"""
     return output
 
 
@@ -417,9 +435,14 @@ def generate_post_page(post):
     # TODO updated_date
     safe_html_content = generate_post_content_html(post['raw'])
 
+    def tag_to_link(tag):
+        return f"""
+<a href="{html.escape("/blog/tag/" + tag_to_slug(tag))}/"
+   title="Posts tagged &quot;{html.escape(tag)}&quot;">{html.escape(tag)}</a>
+""".strip()
     tags = meta.get('tags')
     if tags:
-        safe_html_tag_list = ", ".join(html.escape(tag) for tag in tags)
+        safe_html_tag_list = ", ".join(tag_to_link(tag) for tag in tags)
     else:
         safe_html_tag_list = "[none]"
 
@@ -465,7 +488,7 @@ def generate_post_page(post):
           <h2>Entry</h2>
           <ul>
             <li>Posted on {html.escape(readable_date)}</li>
-            <li>Tags: {safe_html_tag_list}</li> <!-- TODO link to tag pages -->
+            <li>Tags: {safe_html_tag_list}</li>
           </ul>
         </div>
       </div>
@@ -595,19 +618,44 @@ def cmd_generate():
         log("FATAL: This version of Python doesn't support `shutil.rmtree.avoids_symlink_attacks`")
         exit(1)
 
-    # Generate
-
+    # Generate main index page
     with open(path.join(gen_root, 'index.html'), 'w') as indf:
-        indf.write(generate_index_page(posts_desc))
+        indf.write(generate_listing_page(
+            posts_desc, page_title="All posts",
+            page_desc=("This is a list of all posts I've made, from the very beginning. "
+                       "Keep in mind that the older posts are not necessarily "
+                       "a good representation of who I am today."),
+            content_class="all-posts"
+        ))
 
+    # Generate main posts feed
     generate_posts_atom_feed(posts_desc, path.join(gen_root, 'posts.atom'))
 
+    # Generate post pages and their comments feeds
     for post in posts_desc:
         post_gen_dir = path.join(gen_root, *post['meta']['_internal']['path_parts'])
         os.makedirs(post_gen_dir)
         with open(path.join(post_gen_dir, 'index.html'), 'w') as postf:
             postf.write(generate_post_page(post))
         generate_post_comments_atom_feed(post, path.join(post_gen_dir, 'comments.atom'))
+
+    # Generate tags pages
+    def post_tag_slugs(post):
+        return [tag_to_slug(tag) for tag in post['meta'].get('tags', [])]
+
+    all_tag_slugs = {slug for post in posts_desc for slug in post_tag_slugs(post)}
+    for tag_slug in all_tag_slugs:
+        filtered_posts_desc = [p for p in posts_desc if tag_slug in post_tag_slugs(p)]
+        tag_dir = path.join(gen_root, 'tag', tag_slug)
+        os.makedirs(tag_dir)
+        with open(path.join(tag_dir, 'index.html'), 'w') as listf:
+            listf.write(generate_listing_page(
+                filtered_posts_desc, page_title=f"Tagged \"{tag_slug}\"",
+                page_desc=(f"All posts tagged with \"{tag_slug}\". "
+                           "Please note that some of these posts may be quite old, "
+                           "and may not be a good representation of who I am today."),
+                content_class="tagged-posts"
+            ))
 
     log(f"INFO: Processed {len(posts_desc)} posts")
 
