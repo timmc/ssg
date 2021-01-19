@@ -428,11 +428,12 @@ def generate_post_page(post):
 
     permalink = f"{base_path}{meta['url']}"
     title = meta['title']
-    local_date = meta['date'].astimezone(tz_ET)
-    # Python date formatting doesn't have ordinal suffixes and I
-    # didn't see a way to skip zero-padding for day and year.
-    readable_date = format_readable_date(meta['date'])
-    # TODO updated_date
+    readable_posted_date = format_readable_date(meta['date'])
+    if 'updated' in meta:
+        readable_updated_date = format_readable_date(meta['updated'])
+        safe_html_updated_date_item = f"""\n            <li>Last updated on {html.escape(readable_updated_date)}</li>"""
+    else:
+        safe_html_updated_date_item = ""
     safe_html_content = generate_post_content_html(post['raw'])
 
     def tag_to_link(tag):
@@ -487,7 +488,7 @@ def generate_post_page(post):
         <div class="postmetadata">
           <h2>Entry</h2>
           <ul>
-            <li>Posted on {html.escape(readable_date)}</li>
+            <li>Posted on {html.escape(readable_posted_date)}</li>{safe_html_updated_date_item}
             <li>Tags: {safe_html_tag_list}</li>
           </ul>
         </div>
@@ -509,10 +510,9 @@ def generate_post_page(post):
 """
 
 
-def generate_posts_atom_feed(posts_desc, out_path):
+def generate_posts_atom_feed(posts_desc):
     """
-    Given posts in descending chronological order, write out an Atom XML feed
-    to the specified path.
+    Given posts in descending chronological order, generate an Atom XML feed.
 
     This feed is assumed to be the main feed.
     """
@@ -551,13 +551,13 @@ def generate_posts_atom_feed(posts_desc, out_path):
 			  # <link rel="replies" type="text/html" href="https://www.brainonfire.net/blog/2020/07/13/letter-to-ma-governor-covid-19/#comments" thr:count="0"/>
 		    # <link rel="replies" type="application/atom+xml" href="https://www.brainonfire.net/blog/2020/07/13/letter-to-ma-governor-covid-19/feed/atom/" thr:count="0"/>
 		    # <thr:total>0</thr:total>
-    with open(out_path, 'w') as feedf:
-        ET.ElementTree(root).write(feedf, encoding="unicode", xml_declaration=True)
+    # xml_declaration=True not present until Python 3.8
+    return "<?xml version='1.0' encoding='UTF-8'?>\n" + ET.tostring(root, encoding="unicode")
 
 
-def generate_post_comments_atom_feed(post, out_path):
+def generate_post_comments_atom_feed(post):
     """
-    Given a post, write out an Atom feed of its comments to the specified path.
+    Given a post, generate an Atom feed of its comments.
     """
     # Generate full public-site URL here -- it's a global identifier
     # in some places in the feed, and needs to be absolute in others.
@@ -589,8 +589,7 @@ def generate_post_comments_atom_feed(post, out_path):
         ET.SubElement(entry, 'updated').text = meta.get('updated', meta['date']).isoformat(sep='T')
         ET.SubElement(entry, 'published').text = meta['date'].isoformat(sep='T')
         ET.SubElement(entry, 'content', {'xml:base': post_full_url}, type='html').text = generate_comment_html(comment['raw'])
-    with open(out_path, 'w') as feedf:
-        ET.ElementTree(root).write(feedf, encoding="unicode", xml_declaration=True)
+    return "<?xml version='1.0' encoding='UTF-8'?>\n" + ET.tostring(root, encoding="unicode")
 
 
 @cli.command(name='generate')
@@ -610,34 +609,73 @@ def cmd_generate():
     posts_desc = sorted(posts, key=lambda p: p['meta']['date'], reverse=True)
     del posts
 
-    # Clear the target directory
-    if shutil.rmtree.avoids_symlink_attacks:
-        shutil.rmtree(gen_root)
-        os.mkdir(gen_root)
-    else:
-        log("FATAL: This version of Python doesn't support `shutil.rmtree.avoids_symlink_attacks`")
-        exit(1)
+    # If we simply wipe out the generated directory and regenerate
+    # everything, rsync is going to have to sync every file on
+    # publish, since the mtime and inode have changed for every
+    # path.
+    #
+    # Instead, we'll avoid rewriting a file if the content hasn't
+    # changed, and at the end will delete any files that are on disk
+    # but wouldn't have been generated. The below is the pair of sets
+    # used to track this.
+
+    # Collect all existing non-directory paths.
+    existing_paths = set()
+    for parent, _dirnames, filenames in os.walk(gen_root):
+        for filename in filenames:
+            existing_paths.add(path.join(parent, filename))
+    # Mutable: All files
+    paths_written = set()
+
+    def write_and_record(abs_path, content):
+        """
+        Write to the path if the contents differ, and note as written.
+        """
+        newbytes = content.encode()
+
+        if path.exists(abs_path):
+            with open(abs_path, 'rb') as f:
+                oldbytes = f.read()
+        else:
+            oldbytes = None
+
+        if newbytes != oldbytes:
+            with open(abs_path, 'wb') as f:
+                f.write(newbytes)
+
+        paths_written.add(abs_path)
+
 
     # Generate main index page
-    with open(path.join(gen_root, 'index.html'), 'w') as indf:
-        indf.write(generate_listing_page(
+    write_and_record(
+        path.join(gen_root, 'index.html'),
+        generate_listing_page(
             posts_desc, page_title="All posts",
             page_desc=("This is a list of all posts I've made, from the very beginning. "
                        "Keep in mind that the older posts are not necessarily "
                        "a good representation of who I am today."),
             content_class="all-posts"
-        ))
+        )
+    )
 
     # Generate main posts feed
-    generate_posts_atom_feed(posts_desc, path.join(gen_root, 'posts.atom'))
+    write_and_record(
+        path.join(gen_root, 'posts.atom'),
+        generate_posts_atom_feed(posts_desc)
+    )
 
     # Generate post pages and their comments feeds
     for post in posts_desc:
         post_gen_dir = path.join(gen_root, *post['meta']['_internal']['path_parts'])
-        os.makedirs(post_gen_dir)
-        with open(path.join(post_gen_dir, 'index.html'), 'w') as postf:
-            postf.write(generate_post_page(post))
-        generate_post_comments_atom_feed(post, path.join(post_gen_dir, 'comments.atom'))
+        os.makedirs(post_gen_dir, exist_ok=True)
+        write_and_record(
+            path.join(post_gen_dir, 'index.html'),
+            generate_post_page(post)
+        )
+        write_and_record(
+            path.join(post_gen_dir, 'comments.atom'),
+            generate_post_comments_atom_feed(post)
+        )
 
     # Generate tags pages
     def post_tag_slugs(post):
@@ -647,15 +685,27 @@ def cmd_generate():
     for tag_slug in all_tag_slugs:
         filtered_posts_desc = [p for p in posts_desc if tag_slug in post_tag_slugs(p)]
         tag_dir = path.join(gen_root, 'tag', tag_slug)
-        os.makedirs(tag_dir)
-        with open(path.join(tag_dir, 'index.html'), 'w') as listf:
-            listf.write(generate_listing_page(
+        os.makedirs(tag_dir, exist_ok=True)
+        write_and_record(path.join(tag_dir, 'index.html'),
+            generate_listing_page(
                 filtered_posts_desc, page_title=f"Tagged \"{tag_slug}\"",
                 page_desc=(f"All posts tagged with \"{tag_slug}\". "
                            "Please note that some of these posts may be quite old, "
                            "and may not be a good representation of who I am today."),
                 content_class="tagged-posts"
-            ))
+            )
+        )
+
+    # Remove all files that weren't re-generated
+    for parent, _dirnames, filenames in os.walk(gen_root, topdown=False):
+        for filename in filenames:
+            filepath = path.join(parent, filename)
+            if filepath not in paths_written:
+                os.remove(filepath)
+    # Remove any remaining empty directories
+    for parent, dirnames, filenames in os.walk(gen_root):
+        if not dirnames and not filenames:
+            os.removedirs(parent)
 
     log(f"INFO: Processed {len(posts_desc)} posts")
 
