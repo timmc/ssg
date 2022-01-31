@@ -17,5 +17,5 @@ grep -h -P '^-[rc]\s+([^#]+?)\s*(#.*)$' "$2.spec" \
     redo-ifchange "$d"
 done
 
-export CUSTOM_COMPILE_COMMAND="make upgrade"
+export CUSTOM_COMPILE_COMMAND="redo ssg/requirements/upgrade"
 pip-compile --rebuild --upgrade -o $3 "$2.spec"
