@@ -6,14 +6,14 @@
 #
 attrs==21.4.0
     # via pytest
-click==8.0.3
+click==8.1.2
     # via
     #   -r dev.spec
     #   -r pip-tools.lst
     #   pip-tools
-ftfy==6.0.3
+ftfy==6.1.1
     # via -r dev.spec
-importlib-metadata==4.10.1
+importlib-metadata==4.11.3
     # via markdown
 iniconfig==1.1.1
     # via pytest
@@ -25,33 +25,32 @@ pep517==0.12.0
     # via
     #   -r pip-tools.lst
     #   pip-tools
-pip-tools==6.4.0
+pip-tools==6.6.0
     # via -r pip-tools.lst
 pluggy==1.0.0
     # via pytest
 py==1.11.0
     # via pytest
-pyparsing==3.0.7
+pyparsing==3.0.8
     # via packaging
-pytest==6.2.5
+pytest==7.1.2
     # via -r dev.spec
 python-dateutil==2.8.2
     # via -r dev.spec
 six==1.16.0
     # via python-dateutil
-toml==0.10.2
-    # via pytest
-tomli==2.0.0
+tomli==2.0.1
     # via
     #   -r pip-tools.lst
     #   pep517
+    #   pytest
 wcwidth==0.2.5
     # via ftfy
 wheel==0.37.1
     # via
     #   -r pip-tools.lst
     #   pip-tools
-zipp==3.7.0
+zipp==3.8.0
     # via importlib-metadata
 
 # The following packages are considered to be unsafe in a requirements file:
